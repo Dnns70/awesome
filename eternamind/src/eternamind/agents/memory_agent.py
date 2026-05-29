@@ -26,19 +26,28 @@ class MemoryAgent(BaseAgent):
         self._client = anthropic.AsyncAnthropic(api_key=config.anthropic_api_key)
 
     async def process(self, signal: CognitiveSignal) -> AgentResponse:
+        high_importance = self._sqlite.get_high_importance_memories(min_importance=0.7, limit=3)
         semantic = self._vector.search(signal.content, n_results=4)
         keyword = self._sqlite.search_memories_fts(signal.content, limit=3)
 
         memory_texts: list[str] = []
         seen_ids: set[str] = set()
+        # High-importance memories get priority
+        for item in high_importance:
+            if item["id"] not in seen_ids:
+                memory_texts.append(item["content"])
+                seen_ids.add(item["id"])
+                self._sqlite.record_memory_access(item["id"])
         for item in semantic:
             if item["id"] not in seen_ids:
                 memory_texts.append(item["content"])
                 seen_ids.add(item["id"])
+                self._sqlite.record_memory_access(item["id"])
         for item in keyword:
             if item["id"] not in seen_ids:
                 memory_texts.append(item["content"])
                 seen_ids.add(item["id"])
+                self._sqlite.record_memory_access(item["id"])
 
         if not memory_texts:
             return AgentResponse(
@@ -53,7 +62,7 @@ class MemoryAgent(BaseAgent):
         response = await self._client.messages.create(
             model=self._config.agent_model_fast,
             max_tokens=256,
-            system=_SYSTEM_PROMPT,
+            system=self._get_system_prompt(_SYSTEM_PROMPT),
             messages=[{"role": "user", "content": user_content}],
         )
         return AgentResponse(

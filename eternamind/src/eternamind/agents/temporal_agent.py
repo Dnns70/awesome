@@ -49,7 +49,7 @@ class TemporalAgent(BaseAgent):
         response = await self._client.messages.create(
             model=self._config.agent_model_fast,
             max_tokens=128,
-            system=_SYSTEM_PROMPT,
+            system=self._get_system_prompt(_SYSTEM_PROMPT),
             messages=[{"role": "user", "content": context}],
         )
         return AgentResponse(

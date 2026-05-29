@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime
 
+from .agent_scorer import AgentScorer
 from .agents.creative_agent import CreativeAgent
+from .agents.executive_agent import ExecutiveAgent
 from .agents.memory_agent import MemoryAgent
 from .agents.perceptual_agent import PerceptualAgent
+from .agents.predictive_agent import PredictiveAgent
 from .agents.reflective_agent import ReflectiveAgent
 from .agents.social_agent import SocialAgent
 from .agents.temporal_agent import TemporalAgent
 from .ccl import ContinuousCognitionLoop
 from .ccm import CentralConsciousnessModel
 from .config import EternaMindConfig
+from .identity_tracker import IdentityTracker
 from .integration_layer import IntegrationLayer
-from .models import AgentType, CognitiveSignal
+from .models import AgentType, CognitiveSignal, UnifiedExperience
 from .storage.sqlite_store import SQLiteStore
 from .storage.vector_store import VectorStore
 from .tgm import TransparentGatingMechanism
+
+logger = logging.getLogger(__name__)
 
 
 class EternaMindEngine:
@@ -35,6 +43,7 @@ class EternaMindEngine:
         reflective_agent = ReflectiveAgent(config, self._sqlite)
         creative_agent = CreativeAgent(config, self._sqlite, self._vector)
         social_agent = SocialAgent(config, self._sqlite)
+        predictive_agent = PredictiveAgent(config, self._sqlite)
 
         self._agents = {
             AgentType.MEMORY: memory_agent,
@@ -43,12 +52,25 @@ class EternaMindEngine:
             AgentType.REFLECTIVE: reflective_agent,
             AgentType.CREATIVE: creative_agent,
             AgentType.SOCIAL: social_agent,
+            AgentType.PREDICTIVE: predictive_agent,
         }
 
+        self._executive = ExecutiveAgent(config)
         self._tgm = TransparentGatingMechanism()
-        self._integration = IntegrationLayer(self._agents)
+        self._integration = IntegrationLayer(
+            self._agents,
+            executive_agent=self._executive,
+            sqlite=self._sqlite,
+        )
         self._ccm = CentralConsciousnessModel(config, self._sqlite)
-        self._ccl = ContinuousCognitionLoop(config, self._agents, self._sqlite)
+        self._identity_tracker = IdentityTracker(config, self._sqlite)
+        self._agent_scorer = AgentScorer(config, self._sqlite)
+        self._ccl = ContinuousCognitionLoop(
+            config,
+            self._agents,
+            self._sqlite,
+            identity_tracker=self._identity_tracker,
+        )
 
     def start(self) -> None:
         self._ccl.start()
@@ -69,6 +91,14 @@ class EternaMindEngine:
         self._sqlite.save_interaction(user_input, response)
         self._save_interaction_as_memory(user_input, response)
 
+        # Score contributions and update tuning in the background (non-blocking)
+        last_id = self._sqlite.get_last_interaction_id()
+        if last_id is not None:
+            asyncio.create_task(
+                self._score_and_tune(experience, response, last_id),
+                name=f"scorer_{last_id}",
+            )
+
         return response
 
     def _save_interaction_as_memory(self, user_input: str, response: str) -> None:
@@ -80,6 +110,17 @@ class EternaMindEngine:
             content,
             {"source": "interaction", "timestamp": datetime.utcnow().isoformat()},
         )
+
+    async def _score_and_tune(
+        self, experience: UnifiedExperience, response: str, interaction_id: int
+    ) -> None:
+        try:
+            scores = await self._agent_scorer.score_contributions(experience, response, interaction_id)
+            for agent_type, agent in self._agents.items():
+                instructions = self._agent_scorer.get_tuning_instructions(agent_type)
+                agent.set_tuning_instructions(instructions)
+        except Exception as exc:
+            logger.warning("Score-and-tune error: %s", exc)
 
     @property
     def sqlite(self) -> SQLiteStore:

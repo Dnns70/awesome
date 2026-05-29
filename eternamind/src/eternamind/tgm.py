@@ -18,11 +18,12 @@ _SOCIAL_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Core agents always run
+# Core agents always run every turn
 _CORE_AGENTS: frozenset[AgentType] = frozenset({
     AgentType.MEMORY,
     AgentType.TEMPORAL,
     AgentType.PERCEPTUAL,
+    AgentType.PREDICTIVE,
 })
 
 
@@ -40,7 +41,7 @@ class TransparentGatingMechanism:
         if _SOCIAL_PATTERNS.search(text):
             active.add(AgentType.SOCIAL)
 
-        # Short inputs (greetings, acknowledgements) skip heavy agents
+        # Short inputs (greetings, acknowledgements) skip heavy conditional agents
         if len(text.split()) <= 4 and AgentType.REFLECTIVE in active:
             active.discard(AgentType.CREATIVE)
 

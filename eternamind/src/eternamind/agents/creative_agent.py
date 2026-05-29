@@ -42,7 +42,7 @@ class CreativeAgent(BaseAgent):
         response = await self._client.messages.create(
             model=self._config.agent_model_mid,
             max_tokens=200,
-            system=_SYSTEM_PROMPT,
+            system=self._get_system_prompt(_SYSTEM_PROMPT),
             messages=[{"role": "user", "content": user_content}],
         )
         return AgentResponse(

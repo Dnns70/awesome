@@ -7,6 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
 
+_MIGRATIONS = [
+    "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
+    "ALTER TABLE memories ADD COLUMN last_accessed TEXT DEFAULT NULL",
+]
+
 
 class SQLiteStore:
     def __init__(self, db_path: Path) -> None:
@@ -70,6 +75,38 @@ class SQLiteStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS goals (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    priority INTEGER DEFAULT 5,
+                    status TEXT DEFAULT 'active',
+                    progress_notes TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    source TEXT DEFAULT 'user'
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_type TEXT NOT NULL,
+                    interaction_id INTEGER NOT NULL,
+                    score REAL NOT NULL,
+                    score_reason TEXT DEFAULT '',
+                    timestamp TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_agent_scores_type
+                    ON agent_scores(agent_type, timestamp DESC);
+
+                CREATE TABLE IF NOT EXISTS identity_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_content TEXT NOT NULL,
+                    drift_score REAL DEFAULT 0.0,
+                    timestamp TEXT NOT NULL,
+                    interaction_count_at_snapshot INTEGER DEFAULT 0
+                );
+
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
                 USING fts5(content, context, content=memories, content_rowid=rowid);
 
@@ -84,6 +121,12 @@ class SQLiteStore:
                     INSERT INTO memories_fts(rowid, content, context) VALUES (new.rowid, new.content, new.context);
                 END;
             """)
+            # Migrate existing databases
+            for migration in _MIGRATIONS:
+                try:
+                    conn.execute(migration)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
     # --- Interactions ---
 
@@ -105,14 +148,58 @@ class SQLiteStore:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM interactions").fetchone()[0]
 
+    def get_last_interaction_id(self) -> int | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT MAX(id) as last_id FROM interactions").fetchone()
+        return row["last_id"] if row else None
+
     # --- Memories ---
 
     def save_memory(self, memory_id: str, content: str, context: str = "", importance: float = 0.5) -> None:
         with self._conn() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO memories (id, content, context, importance, timestamp) VALUES (?, ?, ?, ?, ?)",
+                """INSERT INTO memories (id, content, context, importance, timestamp, access_count)
+                   VALUES (?, ?, ?, ?, ?, 0)
+                   ON CONFLICT(id) DO UPDATE SET
+                       content=excluded.content,
+                       context=excluded.context,
+                       importance=excluded.importance,
+                       timestamp=excluded.timestamp""",
                 (memory_id, content, context, importance, datetime.utcnow().isoformat()),
             )
+
+    def record_memory_access(self, memory_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE memories
+                   SET access_count = COALESCE(access_count, 0) + 1,
+                       last_accessed = ?
+                   WHERE id = ?""",
+                (datetime.utcnow().isoformat(), memory_id),
+            )
+
+    def update_memory_importance(self, memory_id: str, new_importance: float) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE memories SET importance = ? WHERE id = ?",
+                (max(0.0, min(1.0, new_importance)), memory_id),
+            )
+
+    def get_high_importance_memories(self, min_importance: float = 0.7, limit: int = 10) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE importance >= ? ORDER BY importance DESC LIMIT ?",
+                (min_importance, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_memories_for_rescoring(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, content, importance, access_count, last_accessed, timestamp FROM memories LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def search_memories_fts(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         with self._conn() as conn:
@@ -197,6 +284,127 @@ class SQLiteStore:
             return 0.0
         last = datetime.fromisoformat(row["last"])
         return (datetime.utcnow() - last).total_seconds()
+
+    # --- Goals ---
+
+    def save_goal(self, goal_id: str, title: str, description: str = "", priority: int = 5, source: str = "user") -> None:
+        now = datetime.utcnow().isoformat()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO goals (id, title, description, priority, status, created_at, updated_at, source)
+                   VALUES (?, ?, ?, ?, 'active', ?, ?, ?)""",
+                (goal_id, title, description, priority, now, now, source),
+            )
+
+    def get_active_goals(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM goals WHERE status = 'active' ORDER BY priority ASC, created_at ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_goals(self) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM goals ORDER BY status ASC, priority ASC, created_at ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_goal(self, goal_id: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_goal_status(self, goal_id: str, status: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE goals SET status = ?, updated_at = ? WHERE id = ?",
+                (status, datetime.utcnow().isoformat(), goal_id),
+            )
+
+    def update_goal_priority(self, goal_id: str, priority: int) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE goals SET priority = ?, updated_at = ? WHERE id = ?",
+                (priority, datetime.utcnow().isoformat(), goal_id),
+            )
+
+    def append_goal_progress(self, goal_id: str, note: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE goals
+                   SET progress_notes = CASE
+                       WHEN progress_notes = '' THEN ?
+                       ELSE progress_notes || char(10) || ?
+                   END,
+                   updated_at = ?
+                   WHERE id = ?""",
+                (note, note, datetime.utcnow().isoformat(), goal_id),
+            )
+
+    def delete_goal(self, goal_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+
+    def count_active_goals(self) -> int:
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM goals WHERE status = 'active'").fetchone()[0]
+
+    # --- Agent Scores ---
+
+    def save_agent_score(self, agent_type: str, interaction_id: int, score: float, reason: str = "") -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO agent_scores (agent_type, interaction_id, score, score_reason, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (agent_type, interaction_id, score, reason, datetime.utcnow().isoformat()),
+            )
+
+    def get_rolling_agent_scores(self, agent_type: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM agent_scores WHERE agent_type = ? ORDER BY timestamp DESC LIMIT ?",
+                (agent_type, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_average_agent_score(self, agent_type: str, last_n: int = 10) -> float:
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT AVG(score) as avg_score FROM (
+                       SELECT score FROM agent_scores
+                       WHERE agent_type = ?
+                       ORDER BY timestamp DESC
+                       LIMIT ?
+                   )""",
+                (agent_type, last_n),
+            ).fetchone()
+        if row and row["avg_score"] is not None:
+            return float(row["avg_score"])
+        return 0.5
+
+    # --- Identity Snapshots ---
+
+    def save_identity_snapshot(self, snapshot_content: str, drift_score: float, interaction_count: int) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO identity_snapshots (snapshot_content, drift_score, timestamp, interaction_count_at_snapshot) VALUES (?, ?, ?, ?)",
+                (snapshot_content, drift_score, datetime.utcnow().isoformat(), interaction_count),
+            )
+
+    def get_recent_identity_snapshots(self, limit: int = 5) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM identity_snapshots ORDER BY timestamp DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_latest_identity_snapshot(self) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM identity_snapshots ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
 
     # --- System State ---
 

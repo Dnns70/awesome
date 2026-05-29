@@ -5,6 +5,8 @@ from .perceptual_agent import PerceptualAgent
 from .reflective_agent import ReflectiveAgent
 from .creative_agent import CreativeAgent
 from .social_agent import SocialAgent
+from .predictive_agent import PredictiveAgent
+from .executive_agent import ExecutiveAgent
 
 __all__ = [
     "BaseAgent",
@@ -14,4 +16,6 @@ __all__ = [
     "ReflectiveAgent",
     "CreativeAgent",
     "SocialAgent",
+    "PredictiveAgent",
+    "ExecutiveAgent",
 ]

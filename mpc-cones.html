@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>MPC Cones — Grid Arena</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#05070f; --grid:#10293c;
+    --player:#1ce7ff; --ai:#ff8a1e; --cone:#f5c518;
+    --win:#1ce7ff; --lose:#ff3b4e;
+    --ink:#cfe9f5; --dim:#5b7385;
+    --font:'Chakra Petch', ui-monospace, monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{background:var(--bg); color:var(--ink); font-family:var(--font);
+    overflow:hidden; position:fixed; inset:0;
+    user-select:none; -webkit-user-select:none; touch-action:none;}
+  #app{position:fixed; inset:0; display:flex; flex-direction:column;}
+
+  #hud{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:max(10px,env(safe-area-inset-top)) 16px 10px; gap:8px; font-weight:600; letter-spacing:.06em;}
+  .score{display:flex; flex-direction:column; line-height:1; min-width:70px;}
+  .score .lbl{font-size:11px; letter-spacing:.22em; color:var(--dim);}
+  .score .val{font-size:30px; font-weight:700; margin-top:3px; font-variant-numeric:tabular-nums;}
+  #pScore .val{color:var(--player); text-shadow:0 0 14px rgba(28,231,255,.55);}
+  #aScore{text-align:right;}
+  #aScore .val{color:var(--ai); text-shadow:0 0 14px rgba(255,138,30,.55);}
+  #center{text-align:center; line-height:1.1;}
+  #center .round{font-size:11px; letter-spacing:.28em; color:var(--dim);}
+  #center .speed{font-size:13px; color:var(--ink); letter-spacing:.16em; margin-top:4px; opacity:.85;}
+
+  #arena{flex:1 1 auto; position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  canvas{display:block; image-rendering:pixelated;
+    box-shadow:0 0 0 1px rgba(28,231,255,.10), 0 0 60px rgba(8,20,40,.9) inset;}
+
+  #vignette{position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%);
+    mix-blend-mode:multiply;}
+  #flash{position:absolute; inset:0; pointer-events:none; opacity:0; background:#fff;}
+  #nearmiss{position:absolute; inset:0; pointer-events:none; opacity:0;
+    box-shadow:0 0 80px rgba(28,231,255,.0) inset; transition:opacity .25s ease;}
+
+  .overlay{position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    padding:26px 22px; gap:16px; background:rgba(4,7,15,.74);
+    backdrop-filter:blur(2px); z-index:5; overflow:auto;}
+  .overlay.hidden{display:none;}
+  .title{font-size:13px; letter-spacing:.5em; color:var(--dim); text-indent:.5em;}
+  .big{font-size:clamp(36px,11vw,64px); font-weight:700; letter-spacing:.04em; line-height:.95;}
+  .big .a{color:var(--player); text-shadow:0 0 24px rgba(28,231,255,.5);}
+  .big .b{color:var(--cone); text-shadow:0 0 24px rgba(245,197,24,.5);}
+  .sub{font-size:14px; color:var(--ink); letter-spacing:.05em; max-width:340px; line-height:1.5; opacity:.9;}
+  .result{font-size:clamp(38px,12vw,68px); font-weight:700; letter-spacing:.05em;}
+  .result.win{color:var(--win); text-shadow:0 0 30px rgba(28,231,255,.6);}
+  .result.lose{color:var(--lose); text-shadow:0 0 30px rgba(255,59,78,.55);}
+
+  .seg{display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center;}
+  .seg .seglbl{font-size:10px; letter-spacing:.22em; color:var(--dim); width:62px; text-align:right;}
+  .seg button{font-family:var(--font); font-weight:600; letter-spacing:.12em; font-size:12px;
+    color:var(--dim); background:transparent; border:1px solid rgba(91,115,133,.5);
+    padding:9px 13px; border-radius:2px; cursor:pointer; transition:.15s;}
+  .seg button.on{color:var(--bg); background:var(--player); border-color:var(--player);
+    box-shadow:0 0 18px rgba(28,231,255,.4);}
+  #diff button.on{background:var(--cone); border-color:var(--cone);
+    box-shadow:0 0 18px rgba(245,197,24,.4); color:var(--bg);}
+  .cta{font-family:var(--font); font-weight:700; letter-spacing:.2em; font-size:15px;
+    color:var(--bg); background:var(--player); border:none; padding:15px 32px;
+    border-radius:2px; cursor:pointer; box-shadow:0 0 30px rgba(28,231,255,.4);
+    animation:pulse 1.8s ease-in-out infinite; margin-top:4px;}
+  @keyframes pulse{50%{box-shadow:0 0 12px rgba(28,231,255,.25);}}
+  .hint{font-size:12px; color:var(--dim); letter-spacing:.08em; line-height:1.6;}
+  .hint b{color:var(--player); font-weight:600;}
+  .hint i{color:var(--cone); font-style:normal; font-weight:600;}
+  .hint em{color:var(--ai); font-style:normal; font-weight:600;}
+
+  #count{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    z-index:6; pointer-events:none;}
+  #count span{font-size:clamp(70px,22vw,140px); font-weight:700; color:var(--player);
+    text-shadow:0 0 40px rgba(28,231,255,.6);}
+  #count.hidden{display:none;}
+  @media (prefers-reduced-motion: reduce){ .cta{animation:none;} }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div class="score" id="pScore"><span class="lbl">YOU</span><span class="val">0</span></div>
+    <div id="center"><div class="round">ROUND 1</div><div class="speed">▸ ▸ ▸</div></div>
+    <div class="score" id="aScore"><span class="lbl">GRID</span><span class="val">0</span></div>
+  </div>
+
+  <div id="arena">
+    <canvas id="game"></canvas>
+    <div id="vignette"></div>
+    <div id="nearmiss"></div>
+    <div id="flash"></div>
+    <div id="count" class="hidden"><span>3</span></div>
+
+    <div class="overlay" id="ovStart">
+      <div class="title">GRID ARENA</div>
+      <div class="big"><span class="a">MPC</span> <span class="b">CONES</span></div>
+      <div class="sub">Golden cones redirect your cycle on contact. Your <b>cyan beam</b> shows the MPC prediction horizon — plan your path and use cones to trap the Grid AI.</div>
+      <div class="seg" id="diff"><span class="seglbl">GRID AI</span>
+        <button data-d="easy">EASY</button>
+        <button data-d="normal" class="on">NORMAL</button>
+        <button data-d="hard">HARD</button></div>
+      <div class="seg" id="pred"><span class="seglbl">PREDICT</span>
+        <button data-p="off">OFF</button>
+        <button data-p="on" class="on">ON</button></div>
+      <button class="cta" id="startBtn">ENTER THE GRID</button>
+      <div class="hint">
+        Swipe to steer &nbsp;·&nbsp; or tap <b>left</b> / <b>right</b> half to turn<br>
+        <i>Golden cones</i> redirect your cycle · <em>AI uses MPC lookahead too</em><br>
+        First to <b>3</b> rounds wins
+      </div>
+    </div>
+
+    <div class="overlay hidden" id="ovRound">
+      <div class="title" id="roundTitle">ROUND OVER</div>
+      <div class="result" id="roundResult">DERESOLVED</div>
+      <div class="sub" id="roundSub"></div>
+      <button class="cta" id="nextBtn">NEXT ROUND</button>
+    </div>
+
+    <div class="overlay hidden" id="ovEnd">
+      <div class="title">FINAL OUTCOME</div>
+      <div class="result" id="endResult">VICTORY</div>
+      <div class="sub" id="endSub"></div>
+      <button class="cta" id="againBtn">RUN IT BACK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const CELL_CSS = 15, WIN_ROUNDS = 3;
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const COL = { player:'#1ce7ff', grid:'#10293c', ai:'#ff8a1e', cone:'#f5c518' };
+
+  const DIR = { UP:{x:0,y:-1}, DOWN:{x:0,y:1}, LEFT:{x:-1,y:0}, RIGHT:{x:1,y:0} };
+  const DIRS = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT];
+  const eq    = (a,b) => a.x===b.x && a.y===b.y;
+  const opp   = d => ({x:-d.x, y:-d.y});
+  const leftOf  = d => ({x: d.y,  y:-d.x});
+  const rightOf = d => ({x:-d.y,  y: d.x});
+
+  // Difficulty presets — mpcHorizon drives how far the AI simulates cone interactions
+  const DIFF = {
+    easy:   {base:112, floor:84,  cap:18,  rnd:0.30, hunt:-0.22, mpcHorizon:3,  label:'EASY'},
+    normal: {base:92,  floor:62,  cap:55,  rnd:0.12, hunt:0.06,  mpcHorizon:6,  label:'NORMAL'},
+    hard:   {base:78,  floor:50,  cap:130, rnd:0.04, hunt:0.36,  mpcHorizon:12, label:'HARD'},
+  };
+
+  // Start slots: player bottom-left heading up, AI top-right heading down
+  const SLOTS = [
+    {fx:0.22, fy:0.78, dir:DIR.UP},
+    {fx:0.78, fy:0.22, dir:DIR.DOWN},
+  ];
+
+  // DOM refs
+  const canvas  = document.getElementById('game');
+  const ctx     = canvas.getContext('2d');
+  const arena   = document.getElementById('arena');
+  const flashEl = document.getElementById('flash');
+  const nmEl    = document.getElementById('nearmiss');
+  const countEl = document.getElementById('count');
+  const pScoreEl = document.querySelector('#pScore .val');
+  const aScoreEl = document.querySelector('#aScore .val');
+  const roundEl  = document.querySelector('#center .round');
+  const speedEl  = document.querySelector('#center .speed');
+  const ovStart = document.getElementById('ovStart');
+  const ovRound = document.getElementById('ovRound');
+  const ovEnd   = document.getElementById('ovEnd');
+
+  // Sizing / grid
+  let dpr=1, cols=0, rows=0, cell=0;
+  let occ=null;                            // Uint8Array — 0 empty, rider.id for trails
+  let bg=null, bgctx=null;
+  let trail=null, tctx=null;
+  let visited=null, visitToken=0, bfsQueue=null;
+
+  // Game state
+  let state = 'start';
+  let settings = { difficulty:'normal', showPrediction:true };
+  let dcfg = DIFF.normal;
+  let riders = [];
+  let pWins=0, aWins=0, roundNum=1;
+  let tickMs=92, lastSpeedUp=0, acc=0, lastFrame=0;
+  let countdownUntil=0, countShown='';
+  let particles = [];
+  let nearCdUntil = 0;
+  let shakeUntil=0, shakeAmp=0;
+
+  // MPC Cones — not marked in occ; checked dynamically each tick/render
+  let activeCones = [];      // [{x,y,dir,spawnTime,id}]
+  let coneSpawnAt = Infinity;
+  const CONE_LIFETIME  = 20000; // ms before a cone expires
+  const CONE_BLINK_MS  = 3500;  // warn-blink window before expiry
+  const CONE_FIRST_MS  = 5000;  // delay before first spawn after round start
+
+  function haptic(p){ try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} }
+
+  // ── Sizing ──────────────────────────────────────────────────────────────────
+  function fit(){
+    dpr = Math.max(1, Math.min(3, window.devicePixelRatio||1));
+    const r = arena.getBoundingClientRect();
+    const cssW = Math.max(120, Math.floor(r.width));
+    const cssH = Math.max(120, Math.floor(r.height));
+    cols = Math.max(12, Math.floor(cssW / CELL_CSS));
+    rows = Math.max(12, Math.floor(cssH / CELL_CSS));
+    cell = Math.round(CELL_CSS * dpr);
+    canvas.width  = cols*cell; canvas.height = rows*cell;
+    canvas.style.width  = (cols*CELL_CSS)+'px';
+    canvas.style.height = (rows*CELL_CSS)+'px';
+    occ     = new Uint8Array(cols*rows);
+    visited = new Int32Array(cols*rows); visitToken = 0;
+    bfsQueue = new Int32Array(cols*rows);
+    buildBackground();
+    trail = document.createElement('canvas');
+    trail.width = canvas.width; trail.height = canvas.height;
+    tctx = trail.getContext('2d');
+  }
+
+  function buildBackground(){
+    bg = document.createElement('canvas');
+    bg.width = canvas.width; bg.height = canvas.height;
+    bgctx = bg.getContext('2d');
+    const g = bgctx.createLinearGradient(0,0,0,bg.height);
+    g.addColorStop(0,'#070c18'); g.addColorStop(1,'#04060e');
+    bgctx.fillStyle = g; bgctx.fillRect(0,0,bg.width,bg.height);
+    bgctx.strokeStyle = COL.grid; bgctx.lineWidth = 1; bgctx.globalAlpha = 0.9;
+    for(let c=0; c<=cols; c++){
+      const x = Math.round(c*cell)+.5;
+      bgctx.beginPath(); bgctx.moveTo(x,0); bgctx.lineTo(x,bg.height); bgctx.stroke();
+    }
+    for(let rr=0; rr<=rows; rr++){
+      const y = Math.round(rr*cell)+.5;
+      bgctx.beginPath(); bgctx.moveTo(0,y); bgctx.lineTo(bg.width,y); bgctx.stroke();
+    }
+    bgctx.globalAlpha = 1;
+  }
+
+  // ── Riders ──────────────────────────────────────────────────────────────────
+  function buildRiders(){
+    riders = [];
+    for(let i=0; i<2; i++){
+      riders.push({
+        id:i+1, color:i===0?COL.player:COL.ai, isAI:i>0,
+        x:0, y:0, fromX:0, fromY:0,
+        dir:DIR.UP, pending:DIR.UP,
+        alive:true, recent:[],
+      });
+    }
+  }
+
+  function pushRecent(r,x,y){
+    r.recent.push({x,y});
+    if(r.recent.length>9) r.recent.shift();
+  }
+
+  function resetRound(){
+    occ.fill(0);
+    tctx.clearRect(0,0,trail.width,trail.height);
+    particles = [];
+    activeCones = [];
+    for(let i=0; i<riders.length; i++){
+      const s=SLOTS[i], r=riders[i];
+      r.x = Math.min(cols-2, Math.max(1, Math.floor(cols*s.fx)));
+      r.y = Math.min(rows-2, Math.max(1, Math.floor(rows*s.fy)));
+      r.dir=s.dir; r.pending=s.dir; r.alive=true;
+      r.fromX=r.x; r.fromY=r.y; r.recent=[];
+      occ[r.y*cols+r.x] = r.id;
+      paintCell(r.x, r.y, r.color);
+      pushRecent(r, r.x, r.y);
+    }
+    tickMs = dcfg.base;
+    speedEl.textContent = '▸ ▸ ▸';
+    nearCdUntil = 0;
+  }
+
+  // ── Trail painting ──────────────────────────────────────────────────────────
+  function paintCell(x,y,color){
+    const px=x*cell, py=y*cell;
+    tctx.save();
+    tctx.shadowColor=color; tctx.shadowBlur=cell*0.9;
+    tctx.fillStyle=color; tctx.globalAlpha=0.95;
+    const pad = Math.max(1, cell*0.12);
+    tctx.fillRect(px+pad, py+pad, cell-pad*2, cell-pad*2);
+    tctx.restore();
+  }
+
+  // ── Cone helpers ────────────────────────────────────────────────────────────
+  function coneAt(x,y){
+    return activeCones.find(c=>c.x===x && c.y===y) || null;
+  }
+
+  function spawnCones(now){
+    const count = 1 + ((Math.random()*2)|0);
+    let spawned = 0;
+    for(let attempt=0; attempt<80 && spawned<count; attempt++){
+      const cx = 2 + ((Math.random()*(cols-4))|0);
+      const cy = 2 + ((Math.random()*(rows-4))|0);
+      if(occ[cy*cols+cx] !== 0) continue;
+      if(activeCones.some(c=>c.x===cx && c.y===cy)) continue;
+      // Keep away from rider heads
+      let nearRider = false;
+      for(const r of riders){
+        if(!r.alive) continue;
+        if(Math.abs(cx-r.x)+Math.abs(cy-r.y) < 5){ nearRider=true; break; }
+      }
+      if(nearRider) continue;
+      activeCones.push({
+        x:cx, y:cy,
+        dir: DIRS[(Math.random()*4)|0],
+        spawnTime: now,
+      });
+      spawned++;
+    }
+    coneSpawnAt = now + 7000 + Math.random()*6000;
+  }
+
+  function expireCones(now){
+    for(let i=activeCones.length-1; i>=0; i--){
+      if(now - activeCones[i].spawnTime > CONE_LIFETIME) activeCones.splice(i,1);
+    }
+  }
+
+  // Redirect rider if they stepped onto a cone; removes the cone
+  function applyConeEffect(r){
+    const ci = activeCones.findIndex(c=>c.x===r.x && c.y===r.y);
+    if(ci === -1) return;
+    const cone = activeCones[ci];
+    r.dir = cone.dir;
+    r.pending = cone.dir;
+    activeCones.splice(ci,1);
+    flash('rgba(245,197,24,.32)');
+    haptic([12,18,12]);
+    burst(r.x, r.y, COL.cone);
+  }
+
+  // ── BFS reachability (allocation-free, generation-stamped) ──────────────────
+  function reachable(sx,sy,cap){
+    const start = sy*cols+sx;
+    if(occ[start] !== 0) return 0;
+    visitToken++;
+    if(visitToken > 2000000000){ visited.fill(0); visitToken=1; }
+    let head=0, tail=0, count=0;
+    bfsQueue[tail++] = start; visited[start] = visitToken;
+    while(head<tail && count<cap){
+      const idx = bfsQueue[head++]; count++;
+      const x=idx%cols, y=(idx/cols)|0;
+      if(x+1<cols){  const k=idx+1;    if(occ[k]===0&&visited[k]!==visitToken){visited[k]=visitToken;bfsQueue[tail++]=k;}}
+      if(x-1>=0){    const k=idx-1;    if(occ[k]===0&&visited[k]!==visitToken){visited[k]=visitToken;bfsQueue[tail++]=k;}}
+      if(y+1<rows){  const k=idx+cols; if(occ[k]===0&&visited[k]!==visitToken){visited[k]=visitToken;bfsQueue[tail++]=k;}}
+      if(y-1>=0){    const k=idx-cols; if(occ[k]===0&&visited[k]!==visitToken){visited[k]=visitToken;bfsQueue[tail++]=k;}}
+    }
+    return count;
+  }
+
+  function nearestRivalDist(r,x,y){
+    let best = Infinity;
+    for(const o of riders){
+      if(o===r || !o.alive) continue;
+      const d = Math.abs(x-o.x)+Math.abs(y-o.y);
+      if(d<best) best=d;
+    }
+    return best===Infinity ? 0 : best;
+  }
+
+  // Simulate a path of `steps` ahead from (sx,sy,sd), respecting cones and walls.
+  // Returns {valid: steps taken, fx, fy, fd: final pos/dir}.
+  function simulatePath(sx,sy,sd,steps){
+    let x=sx, y=sy, d=sd, valid=0;
+    for(let i=0; i<steps; i++){
+      const nx=x+d.x, ny=y+d.y;
+      if(nx<0||ny<0||nx>=cols||ny>=rows||occ[ny*cols+nx]!==0) break;
+      valid++;
+      const c = coneAt(nx,ny);
+      if(c) d = c.dir;
+      x=nx; y=ny;
+    }
+    return {valid, fx:x, fy:y, fd:d};
+  }
+
+  // ── AI — MPC-aware pathfinding ───────────────────────────────────────────────
+  function aiThink(r){
+    const d = r.dir;
+    const opts = [leftOf(d), d, rightOf(d)];
+    let best=-Infinity, choice=d, safe=[];
+    for(const nd of opts){
+      if(eq(nd, opp(r.dir))) continue;
+      const nx=r.x+nd.x, ny=r.y+nd.y;
+      if(nx<0||ny<0||nx>=cols||ny>=rows||occ[ny*cols+nx]!==0) continue;
+      safe.push(nd);
+      // MPC forward simulation along this candidate
+      const sim = simulatePath(nx, ny, nd, dcfg.mpcHorizon);
+      let score = reachable(sim.fx, sim.fy, dcfg.cap);
+      score += sim.valid * 0.6;
+      score -= Math.min(nearestRivalDist(r,nx,ny), 12) * dcfg.hunt;
+      score += Math.random() * 0.5;
+      if(score > best){ best=score; choice=nd; }
+    }
+    if(safe.length && Math.random() < dcfg.rnd)
+      choice = safe[(Math.random()*safe.length)|0];
+    if(!safe.length) choice = d;
+    r.pending = choice;
+  }
+
+  // ── Tick ─────────────────────────────────────────────────────────────────────
+  function tick(now){
+    // AI decides
+    for(const r of riders){ if(r.alive && r.isAI) aiThink(r); }
+    // Commit pending direction (no 180°)
+    for(const r of riders){
+      if(!r.alive) continue;
+      if(!eq(r.pending, opp(r.dir))) r.dir = r.pending;
+      r.fromX=r.x; r.fromY=r.y;
+    }
+    // Compute moves
+    const moves = riders
+      .filter(r=>r.alive)
+      .map(r=>({r, nx:r.x+r.dir.x, ny:r.y+r.dir.y, crash:false}));
+
+    for(const m of moves){
+      let c = m.nx<0||m.ny<0||m.nx>=cols||m.ny>=rows || occ[m.ny*cols+m.nx]!==0;
+      if(!c){ for(const o of moves){ if(o!==m&&o.nx===m.nx&&o.ny===m.ny){c=true;break;} } }
+      m.crash = c;
+    }
+    let anyCrash = false;
+    for(const m of moves){
+      if(m.crash){
+        m.r.alive = false; burst(m.nx, m.ny, m.r.color); anyCrash=true;
+      } else {
+        m.r.x=m.nx; m.r.y=m.ny;
+        occ[m.ny*cols+m.nx] = m.r.id;
+        paintCell(m.nx, m.ny, m.r.color);
+        pushRecent(m.r, m.nx, m.ny);
+        applyConeEffect(m.r);
+      }
+    }
+    if(anyCrash && riders[0] && !riders[0].alive) shake(3.5, 260);
+
+    checkNearMiss();
+
+    if(now >= coneSpawnAt) spawnCones(now);
+    expireCones(now);
+
+    const alive = riders.filter(r=>r.alive);
+    if(alive.length <= 1) endRound(alive);
+  }
+
+  // ── Near-miss flash ──────────────────────────────────────────────────────────
+  function checkNearMiss(){
+    const p = riders[0]; if(!p||!p.alive) return;
+    const now = performance.now(); if(now < nearCdUntil) return;
+    const probes = [leftOf(p.dir), rightOf(p.dir), {x:p.dir.x*2, y:p.dir.y*2}];
+    for(const c of probes){
+      const x=p.x+c.x, y=p.y+c.y;
+      if(x<0||y<0||x>=cols||y>=rows) continue;
+      if(occ[y*cols+x]!==0){ nearMiss(); nearCdUntil=now+450; return; }
+    }
+  }
+  function nearMiss(){
+    haptic(8);
+    nmEl.style.transition='none';
+    nmEl.style.boxShadow='0 0 70px rgba(28,231,255,.55) inset';
+    nmEl.style.opacity='1';
+    requestAnimationFrame(()=>{
+      nmEl.style.transition='opacity .3s ease';
+      nmEl.style.opacity='0';
+    });
+  }
+
+  // ── Round end ────────────────────────────────────────────────────────────────
+  function endRound(alive){
+    const p=riders[0];
+    const playerWon = alive.length===1 && alive[0]===p;
+    const stalemate = alive.length===0;
+    let title,result,sub,cls;
+
+    if(playerWon){
+      pWins++; title='ROUND WON'; result='GRID CLEARED'; cls='win';
+      sub='The Grid crashed. Round is yours.'; haptic([0,40,30,60]);
+    } else if(stalemate){
+      title='STALEMATE'; result='ALL DEREZZED'; cls='';
+      sub='Mutual collision. No point awarded.';
+    } else {
+      aWins++; title='ROUND LOST'; result='DEREZZED'; cls='lose';
+      sub='You hit the light. The Grid takes this one.'; haptic(80);
+    }
+
+    pScoreEl.textContent=pWins; aScoreEl.textContent=aWins;
+    flash(cls==='lose'?'rgba(255,59,78,.5)':cls==='win'?'rgba(28,231,255,.45)':'rgba(200,200,200,.4)');
+
+    if(pWins>=WIN_ROUNDS || aWins>=WIN_ROUNDS){
+      state='gameover';
+      const won = pWins>aWins;
+      const er = document.getElementById('endResult');
+      er.textContent = won?'VICTORY':'DEFEAT';
+      er.className = 'result '+(won?'win':'lose');
+      document.getElementById('endSub').textContent =
+        `Final score  ${pWins} — ${aWins}  ·  ${dcfg.label}`;
+      setTimeout(()=>show(ovEnd), 700);
+    } else {
+      state='roundover';
+      document.getElementById('roundTitle').textContent = title;
+      const rr=document.getElementById('roundResult');
+      rr.textContent=result; rr.className='result '+cls;
+      document.getElementById('roundSub').textContent = sub;
+      setTimeout(()=>show(ovRound), 700);
+    }
+  }
+
+  // ── FX ───────────────────────────────────────────────────────────────────────
+  function burst(cx,cy,color){
+    if(reduceMotion) return;
+    const ox=(cx+0.5)*cell, oy=(cy+0.5)*cell;
+    for(let i=0;i<42;i++){
+      const a=Math.random()*Math.PI*2, sp=(0.6+Math.random()*3.2)*dpr;
+      particles.push({
+        x:ox,y:oy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+        life:1, color, sz:(1+Math.random()*2.5)*dpr,
+      });
+    }
+  }
+  function flash(color){
+    flashEl.style.background=color;
+    flashEl.style.transition='none'; flashEl.style.opacity='0.9';
+    requestAnimationFrame(()=>{
+      flashEl.style.transition='opacity .5s ease'; flashEl.style.opacity='0';
+    });
+  }
+  function shake(amp,dur){
+    if(reduceMotion) return;
+    shakeAmp=amp; shakeUntil=performance.now()+dur;
+  }
+
+  // ── MPC prediction cone (player only) ────────────────────────────────────────
+  // Simulates the player's next N steps (including cone redirections) and renders
+  // a widening semi-transparent beam — the Model Predictive Control horizon.
+  function drawMPCPrediction(rider){
+    if(!rider.alive || !settings.showPrediction) return;
+    const horizon = 10;
+    let sx=rider.x, sy=rider.y, sd={x:rider.dir.x, y:rider.dir.y};
+    const steps = [];
+
+    for(let i=1; i<=horizon; i++){
+      const nx=sx+sd.x, ny=sy+sd.y;
+      if(nx<0||ny<0||nx>=cols||ny>=rows) break;
+      if(occ[ny*cols+nx]!==0) break;
+      const c = coneAt(nx,ny);
+      steps.push({x:nx, y:ny, step:i, isCone:!!c});
+      if(c) sd=c.dir;
+      sx=nx; sy=ny;
+    }
+
+    ctx.save();
+    for(const s of steps){
+      const alpha = 0.38 * (1 - (s.step-1)/horizon);
+      // Cone in path shown in gold; otherwise player cyan
+      const col = s.isCone ? COL.cone : rider.color;
+      // Beam widens with each step (prediction uncertainty cone shape)
+      const spread = cell * (0.26 + 0.065 * s.step);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = col;
+      ctx.shadowColor = col;
+      ctx.shadowBlur = cell * 0.55;
+      const px=s.x*cell + cell/2, py=s.y*cell + cell/2;
+      ctx.fillRect(px - spread/2, py - spread/2, spread, spread);
+    }
+    ctx.restore();
+  }
+
+  // ── Cone rendering ────────────────────────────────────────────────────────────
+  // Draws all live cones directly onto the main canvas each frame.
+  function drawCones(now){
+    if(!activeCones.length) return;
+    ctx.save();
+    for(const cone of activeCones){
+      const age = now - cone.spawnTime;
+      const dying = age > CONE_LIFETIME - CONE_BLINK_MS;
+      // Blink when close to expiry
+      const blink = dying ? (Math.sin(now * 0.012) > 0 ? 1 : 0.25) : 1;
+      const px=cone.x*cell, py=cone.y*cell, half=cell/2;
+
+      ctx.globalAlpha = 0.82 * blink;
+      ctx.shadowColor = COL.cone;
+      ctx.shadowBlur  = cell * 1.1;
+
+      // Outer diamond border
+      ctx.strokeStyle = COL.cone;
+      ctx.lineWidth   = Math.max(1, cell * 0.07);
+      ctx.beginPath();
+      ctx.moveTo(px+half,        py+cell*0.08);
+      ctx.lineTo(px+cell*0.92,   py+half);
+      ctx.lineTo(px+half,        py+cell*0.92);
+      ctx.lineTo(px+cell*0.08,   py+half);
+      ctx.closePath(); ctx.stroke();
+
+      // Directional arrow fill
+      ctx.globalAlpha = 0.9 * blink;
+      ctx.fillStyle   = COL.cone;
+      ctx.shadowBlur  = cell * 0.5;
+      const ax=px+half, ay=py+half;
+      const hs=cell*0.23, hw=cell*0.17;
+      ctx.beginPath();
+      const d=cone.dir;
+      if(eq(d,DIR.UP)){
+        ctx.moveTo(ax,    ay-hs);
+        ctx.lineTo(ax+hw, ay+hs*0.45);
+        ctx.lineTo(ax-hw, ay+hs*0.45);
+      } else if(eq(d,DIR.DOWN)){
+        ctx.moveTo(ax,    ay+hs);
+        ctx.lineTo(ax+hw, ay-hs*0.45);
+        ctx.lineTo(ax-hw, ay-hs*0.45);
+      } else if(eq(d,DIR.LEFT)){
+        ctx.moveTo(ax-hs, ay);
+        ctx.lineTo(ax+hs*0.45, ay+hw);
+        ctx.lineTo(ax+hs*0.45, ay-hw);
+      } else {
+        ctx.moveTo(ax+hs, ay);
+        ctx.lineTo(ax-hs*0.45, ay+hw);
+        ctx.lineTo(ax-hs*0.45, ay-hw);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+  const lerp = (a,b,t) => a + (b-a)*t;
+
+  function drawHead(r,t){
+    const fx=lerp(r.fromX,r.x,t), fy=lerp(r.fromY,r.y,t);
+    const px=(fx+0.5)*cell, py=(fy+0.5)*cell, s=cell*0.62;
+    ctx.save();
+    ctx.shadowColor=r.color; ctx.shadowBlur=cell*1.6; ctx.fillStyle=r.color;
+    ctx.fillRect(px-s/2, py-s/2, s, s);
+    ctx.shadowBlur=0; ctx.globalAlpha=0.9; ctx.fillStyle='#ffffff';
+    ctx.fillRect(px-s*0.18, py-s*0.18, s*0.36, s*0.36);
+    ctx.restore();
+  }
+
+  function drawHotTrail(){
+    const pad = Math.max(1, cell*0.16);
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    for(const r of riders){
+      if(!r.alive) continue;
+      const n = r.recent.length;
+      for(let i=0; i<n; i++){
+        const c=r.recent[i], b=(i+1)/n;
+        ctx.globalAlpha = 0.08+0.45*b; ctx.fillStyle=r.color;
+        ctx.fillRect(c.x*cell+pad, c.y*cell+pad, cell-pad*2, cell-pad*2);
+        if(b>0.7){
+          ctx.globalAlpha=0.35*b; ctx.fillStyle='#ffffff';
+          ctx.fillRect(c.x*cell+cell*0.4, c.y*cell+cell*0.4, cell*0.2, cell*0.2);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  function render(now){
+    let ox=0, oy=0;
+    if(now < shakeUntil){
+      const k=shakeAmp*dpr; ox=(Math.random()*2-1)*k; oy=(Math.random()*2-1)*k;
+    }
+    ctx.setTransform(1,0,0,1, ox, oy);
+    ctx.clearRect(-8,-8, canvas.width+16, canvas.height+16);
+    ctx.drawImage(bg, 0, 0);
+    ctx.drawImage(trail, 0, 0);
+    drawHotTrail();
+
+    if(state==='playing' || state==='countdown'){
+      drawMPCPrediction(riders[0]);
+    }
+
+    drawCones(now);
+
+    const tp = (state==='playing') ? Math.max(0, Math.min(1, acc/tickMs)) : 0;
+    for(const r of riders){ if(r.alive) drawHead(r,tp); }
+
+    if(particles.length){
+      for(const p of particles){
+        ctx.save();
+        ctx.globalAlpha=Math.max(0,p.life);
+        ctx.shadowColor=p.color; ctx.shadowBlur=6*dpr; ctx.fillStyle=p.color;
+        ctx.fillRect(p.x-p.sz/2, p.y-p.sz/2, p.sz, p.sz);
+        ctx.restore();
+      }
+    }
+    ctx.setTransform(1,0,0,1,0,0);
+  }
+
+  // ── Game loop ─────────────────────────────────────────────────────────────────
+  function loop(now){
+    const dt = Math.min(64, now-(lastFrame||now)); lastFrame=now;
+
+    if(state==='countdown'){
+      const remain=countdownUntil-now;
+      const n=Math.ceil(remain/1000);
+      const label = n>0 ? String(n) : 'GO';
+      if(label !== countShown){
+        countShown=label;
+        countEl.querySelector('span').textContent=label;
+      }
+      if(remain <= -350){
+        countEl.classList.add('hidden');
+        state='playing'; acc=0; lastSpeedUp=now; lastFrame=now;
+        coneSpawnAt = now + CONE_FIRST_MS;
+      }
+    }
+
+    if(state==='playing'){
+      acc += dt;
+      if(now-lastSpeedUp > 6000 && tickMs > dcfg.floor){
+        tickMs = Math.max(dcfg.floor, tickMs-5); lastSpeedUp=now;
+        const lvl = Math.round((dcfg.base-tickMs)/((dcfg.base-dcfg.floor)/3||1));
+        speedEl.textContent = ['▸ ▸ ▸','▸▸ ▸','▸▸▸ ▸','▸▸▸▸ ⚡'][Math.min(3,lvl)]||'⚡';
+      }
+      let guard=0;
+      while(acc>=tickMs && state==='playing' && guard<4){
+        acc-=tickMs; tick(now); guard++;
+      }
+    }
+
+    if(particles.length){
+      for(const p of particles){
+        p.x+=p.vx; p.y+=p.vy; p.vx*=0.92; p.vy*=0.92; p.life-=dt/650;
+      }
+      particles = particles.filter(p=>p.life>0);
+    }
+
+    render(now);
+    requestAnimationFrame(loop);
+  }
+
+  // ── Flow ──────────────────────────────────────────────────────────────────────
+  function show(ov){
+    [ovStart,ovRound,ovEnd].forEach(o=>o.classList.add('hidden'));
+    if(ov) ov.classList.remove('hidden');
+  }
+  function startCountdown(){
+    show(null); resetRound();
+    roundEl.textContent = 'ROUND '+roundNum;
+    state='countdown'; countShown='';
+    countEl.classList.remove('hidden');
+    countdownUntil = performance.now() + 3000;
+  }
+  function newMatch(){
+    pWins=0; aWins=0; roundNum=1;
+    pScoreEl.textContent='0'; aScoreEl.textContent='0';
+    fit(); buildRiders(); startCountdown();
+  }
+
+  // ── Input ─────────────────────────────────────────────────────────────────────
+  function steerAbsolute(nd){
+    const r=riders[0]; if(state!=='playing'||!r||!r.alive) return;
+    if(eq(nd,opp(r.dir))||eq(nd,r.pending)) return;
+    r.pending=nd; haptic(7);
+  }
+  function steerRelative(left){
+    const r=riders[0]; if(state!=='playing'||!r||!r.alive) return;
+    const nd = left ? leftOf(r.dir) : rightOf(r.dir);
+    if(eq(nd,r.pending)) return;
+    r.pending=nd; haptic(7);
+  }
+
+  let tStart=null;
+  arena.addEventListener('touchstart', e=>{
+    if(state!=='playing') return;
+    const t=e.changedTouches[0];
+    tStart={x:t.clientX, y:t.clientY, t:performance.now()};
+    e.preventDefault();
+  }, {passive:false});
+  arena.addEventListener('touchend', e=>{
+    if(!tStart||state!=='playing'){ tStart=null; return; }
+    const t=e.changedTouches[0], dx=t.clientX-tStart.x, dy=t.clientY-tStart.y;
+    const dist=Math.hypot(dx,dy), dur=performance.now()-tStart.t;
+    if(dist<24 && dur<350){
+      steerRelative(t.clientX < window.innerWidth/2);
+    } else if(dist>=24){
+      if(Math.abs(dx)>Math.abs(dy)) steerAbsolute(dx>0?DIR.RIGHT:DIR.LEFT);
+      else steerAbsolute(dy>0?DIR.DOWN:DIR.UP);
+    }
+    tStart=null; e.preventDefault();
+  }, {passive:false});
+  arena.addEventListener('touchmove', e=>{
+    if(state==='playing') e.preventDefault();
+  }, {passive:false});
+  arena.addEventListener('mousedown', e=>{
+    if(state!=='playing') return;
+    steerRelative(e.clientX < window.innerWidth/2);
+  });
+  addEventListener('keydown', e=>{
+    if(state!=='playing') return;
+    const k=e.key;
+    if     (k==='ArrowUp'  ||k==='w'||k==='W') steerAbsolute(DIR.UP);
+    else if(k==='ArrowDown' ||k==='s'||k==='S') steerAbsolute(DIR.DOWN);
+    else if(k==='ArrowLeft')                    steerAbsolute(DIR.LEFT);
+    else if(k==='ArrowRight')                   steerAbsolute(DIR.RIGHT);
+    else if(k==='a'||k==='A')                   steerRelative(true);
+    else if(k==='d'||k==='D')                   steerRelative(false);
+    if(k.startsWith('Arrow')) e.preventDefault();
+  });
+
+  // ── Settings toggles ──────────────────────────────────────────────────────────
+  function bindSeg(id, cb){
+    document.getElementById(id).addEventListener('click', e=>{
+      const b=e.target.closest('button'); if(!b) return;
+      document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.toggle('on',x===b));
+      cb(b);
+    });
+  }
+  bindSeg('diff', b=>{ settings.difficulty=b.dataset.d; dcfg=DIFF[settings.difficulty]; });
+  bindSeg('pred', b=>{ settings.showPrediction=(b.dataset.p==='on'); });
+
+  document.getElementById('startBtn').addEventListener('click', newMatch);
+  document.getElementById('againBtn').addEventListener('click', newMatch);
+  document.getElementById('nextBtn').addEventListener('click', ()=>{ roundNum++; startCountdown(); });
+
+  let rt=null;
+  addEventListener('resize', ()=>{
+    clearTimeout(rt);
+    rt=setTimeout(()=>{ if(state==='start'||state==='gameover'||state==='roundover') fit(); },150);
+  });
+  addEventListener('orientationchange', ()=>{
+    setTimeout(()=>{ if(state!=='playing'&&state!=='countdown') fit(); }, 250);
+  });
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden) lastFrame=performance.now();
+  });
+
+  fit(); buildRiders();
+  requestAnimationFrame(t=>{ lastFrame=t; requestAnimationFrame(loop); });
+})();
+</script>
+</body>
+</html>
